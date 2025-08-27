@@ -458,7 +458,7 @@ def create_question_keyboard(answers, language='uz', show_next=True):
 
 
 # Kategoriya tanlash uchun keyboard
-def build_keyboard(page: int = 0, language='uz'):
+def build_keyboard(page: int = 0, language='uz', show_language_button=False):
     categories = CATEGORIES_TRANSLATIONS.get(language, CATEGORIES_TRANSLATIONS['uz'])
     start = page * ITEMS_PER_PAGE
     end = start + ITEMS_PER_PAGE
@@ -493,12 +493,12 @@ def build_keyboard(page: int = 0, language='uz'):
 
     keyboard.append(nav_row)
 
-    # Til o'zgartirish tugmasi
-    keyboard.append([InlineKeyboardButton("🌐  Language |  язык | Tilni o'zgartirish",
-                                          callback_data="change_language")])
+    # Til o'zgartirish tugmasini faqat kerak bo'lganda qo'shish
+    if show_language_button:
+        keyboard.append([InlineKeyboardButton("  🇺🇸 Language  |  🇷🇺 язык  |  🇺🇿 Til  ",
+                                              callback_data="change_language")])
 
     return InlineKeyboardMarkup(keyboard)
-
 
 # Restart keyboard
 def create_restart_keyboard(language='uz'):
@@ -530,14 +530,35 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             reply_markup=create_language_keyboard(),
         )
     else:
-        # Til allaqachon tanlangan
+        # Til allaqachon tanlangan - til tugmasini ko'rsatmaslik
         language = user_settings[user_id]['language']
         t = TRANSLATIONS[language]
         await update.message.reply_text(
             f"<b>{t['welcome_title']}</b>\n\n{t['welcome_text']}",
             parse_mode="HTML",
-            reply_markup=build_keyboard(0, language),
+            reply_markup=build_keyboard(0, language, show_language_button=True),  # Faqat bosh menyuda ko'rsatish
         )
+
+
+# handle_language_selection funksiyasini o'zgartiring:
+
+async def handle_language_selection(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    user_id = query.from_user.id
+
+    language = query.data.split("_")[1]
+
+    # Foydalanuvchi sozlamalarini saqlash
+    user_settings[user_id] = {'language': language}
+
+    t = TRANSLATIONS[language]
+
+    await query.answer(f"Language set to {LANGUAGES[language]['name']}", show_alert=False)
+    await query.edit_message_text(
+        f"<b>{t['welcome_title']}</b>\n\n{t['welcome_text']}",
+        parse_mode="HTML",
+        reply_markup=build_keyboard(0, language, show_language_button=True),  # Bosh menyuda ko'rsatish
+    )
 
 
 async def handle_language_selection(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -581,8 +602,8 @@ async def handle_page(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.answer()
 
     page = int(query.data.split("_")[1])
-    await query.edit_message_reply_markup(reply_markup=build_keyboard(page, language))
-
+    # Til tugmasini ko'rsatmaslik
+    await query.edit_message_reply_markup(reply_markup=build_keyboard(page, language, show_language_button=False))
 
 async def handle_category_selection(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -816,8 +837,9 @@ async def handle_restart(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.edit_message_text(
         f"🎯 <b>{t['select_category']}</b>\n\n{t['select_category']}",
         parse_mode="HTML",
-        reply_markup=build_keyboard(0, language),
+        reply_markup=build_keyboard(0, language, show_language_button=False),  # Til tugmasini yashirish
     )
+
 
 
 async def handle_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -844,8 +866,9 @@ async def handle_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.edit_message_text(
         f"🏠 <b>{t['main_menu']}</b>\n\n{t['select_category']}",
         parse_mode="HTML",
-        reply_markup=build_keyboard(0, language),
+        reply_markup=build_keyboard(0, language, show_language_button=True),  # Bosh menyuda ko'rsatish
     )
+
 
 
 async def handle_noop(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1014,7 +1037,7 @@ async def menu_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         ],
         [
             InlineKeyboardButton("👨‍💻 Developer", callback_data="developer_inline"),
-            InlineKeyboardButton("🌐 Til | Lang", callback_data="change_language")
+            InlineKeyboardButton("🌐 Til | Lang", callback_data="change_language")  # Menuda til o'zgartirish tugmasi
         ]
     ]
 
@@ -1023,7 +1046,6 @@ async def menu_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         parse_mode="HTML",
         reply_markup=InlineKeyboardMarkup(keyboard)
     )
-
 
 # Inline callback'lar uchun handler'lar
 async def handle_help_inline(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1044,6 +1066,7 @@ async def handle_developer_inline(update: Update, context: ContextTypes.DEFAULT_
     await developer(update, context)
 
 
+
 async def handle_start_quiz(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     user_id = query.from_user.id
@@ -1059,8 +1082,9 @@ async def handle_start_quiz(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.edit_message_text(
         f"🎯 <b>{t.get('select_category', 'Select Category')}</b>",
         parse_mode="HTML",
-        reply_markup=build_keyboard(0, language)
+        reply_markup=build_keyboard(0, language, show_language_button=False)  # Til tugmasini yashirish
     )
+
 
 
 # main() funksiyasiga qo'shing:
