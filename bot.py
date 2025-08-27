@@ -3,6 +3,8 @@ import random
 from telegram import Update, InlineKeyboardMarkup, InlineKeyboardButton
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, ContextTypes
 from deep_translator import GoogleTranslator
+import time
+from datetime import datetime, timedelta
 
 translator = GoogleTranslator(source="auto", target="uz")
 print(translator.translate("Hello world"))
@@ -15,6 +17,7 @@ load_dotenv()  # .env faylni avtomatik o‘qiydi
 
 TOKEN = os.getenv("TOKEN")
 print("TOKEN:", TOKEN)
+
 
 
 # Til sozlamalari
@@ -199,6 +202,58 @@ CATEGORIES_TRANSLATIONS = {
         {"name": "🐭 Мультфильмы", "id": 32},
     ]
 }
+STATISTICS_TRANSLATIONS = {
+    'uz': {
+        'session_ended': '🏁 Sessiya yakunlandi!',
+        'quiz_statistics': '📊 Quiz statistikasi',
+        'total_questions': 'Jami savollar',
+        'correct_answers': 'To\'g\'ri javoblar',
+        'wrong_answers': 'Xato javoblar',
+        'skipped_questions': 'O\'tkazib yuborilgan',
+        'quiz_duration': 'Quiz davomiyligi',
+        'start_time': 'Boshlangan vaqti',
+        'end_time': 'Yakunlangan vaqti',
+        'accuracy': 'Aniqlik',
+        'excellent_result': 'Ajoyib natija!',
+        'good_result': 'Yaxshi natija!',
+        'keep_trying': 'Davom eting!',
+        'no_questions_answered': 'Hech qanday savolga javob berilmadi'
+    },
+    'en': {
+        'session_ended': '🏁 Session ended!',
+        'quiz_statistics': '📊 Quiz Statistics',
+        'total_questions': 'Total questions',
+        'correct_answers': 'Correct answers',
+        'wrong_answers': 'Wrong answers',
+        'skipped_questions': 'Skipped questions',
+        'quiz_duration': 'Quiz duration',
+        'start_time': 'Start time',
+        'end_time': 'End time',
+        'accuracy': 'Accuracy',
+        'excellent_result': 'Excellent result!',
+        'good_result': 'Good result!',
+        'keep_trying': 'Keep trying!',
+        'no_questions_answered': 'No questions answered'
+    },
+    'ru': {
+        'session_ended': '🏁 Сессия завершена!',
+        'quiz_statistics': '📊 Статистика викторины',
+        'total_questions': 'Всего вопросов',
+        'correct_answers': 'Правильные ответы',
+        'wrong_answers': 'Неправильные ответы',
+        'skipped_questions': 'Пропущенные вопросы',
+        'quiz_duration': 'Длительность викторины',
+        'start_time': 'Время начала',
+        'end_time': 'Время окончания',
+        'accuracy': 'Точность',
+        'excellent_result': 'Отличный результат!',
+        'good_result': 'Хороший результат!',
+        'keep_trying': 'Продолжайте!',
+        'no_questions_answered': 'Не отвечено ни на один вопрос'
+    }
+}
+for lang in TRANSLATIONS:
+    TRANSLATIONS[lang].update(STATISTICS_TRANSLATIONS[lang])
 
 ITEMS_PER_PAGE = 8
 BUTTONS_PER_ROW = 2
@@ -219,6 +274,15 @@ class QuizSession:
         self.translated_questions_queue = []
         self.current_question_data = None
         self.loading_next_batch = False
+
+        # Statistika uchun yangi o'zgaruvchilar
+        self.start_time = datetime.now()
+        self.end_time = None
+        self.correct_answers = 0
+        self.wrong_answers = 0
+        self.skipped_questions = 0
+        self.total_questions_answered = 0
+        self.session_active = True
 
     async def get_next_question(self):
         # Agar navbatda tarjima qilingan savollar bo'lsa, undan olish
@@ -271,6 +335,7 @@ class QuizSession:
         }
 
     def add_questions_batch(self, questions):
+        """Savollar to'plamini qo'shish"""
         self.questions_queue.extend(questions)
 
     async def preload_next_questions(self):
@@ -285,10 +350,102 @@ class QuizSession:
                 self.translated_questions_queue.append(translated)
 
     def should_load_more_questions(self):
+        """Ko'proq savollar yuklash kerakligini tekshirish"""
         total_remaining = len(self.questions_queue) + len(self.translated_questions_queue)
         return total_remaining < 3
 
+    def mark_answer(self, is_correct):
+        """Javobni belgilash"""
+        self.total_questions_answered += 1
+        if is_correct:
+            self.correct_answers += 1
+        else:
+            self.wrong_answers += 1
 
+    def mark_skipped(self):
+        """O'tkazib yuborilgan savolni belgilash"""
+        self.skipped_questions += 1
+
+    def end_session(self):
+        """Sessiyani tugatish"""
+        self.end_time = datetime.now()
+        self.session_active = False
+
+    def get_duration(self):
+        """Sessiya davomiyligini hisoblash"""
+        end = self.end_time if self.end_time else datetime.now()
+        duration = end - self.start_time
+        return duration
+
+    def get_statistics(self):
+        """Statistika ma'lumotlarini qaytarish"""
+        duration = self.get_duration()
+
+        # Vaqtni formatlash
+        hours = duration.seconds // 3600
+        minutes = (duration.seconds % 3600) // 60
+        seconds = duration.seconds % 60
+
+        if hours > 0:
+            duration_str = f"{hours}:{minutes:02d}:{seconds:02d}"
+        else:
+            duration_str = f"{minutes}:{seconds:02d}"
+
+        return {
+            'total_answered': self.total_questions_answered,
+            'correct': self.correct_answers,
+            'wrong': self.wrong_answers,
+            'skipped': self.skipped_questions,
+            'duration': duration_str,
+            'start_time': self.start_time.strftime("%H:%M"),
+            'end_time': self.end_time.strftime("%H:%M") if self.end_time else datetime.now().strftime("%H:%M")
+        }
+
+
+# Statistika xabarini yaratish funksiyasi
+def create_statistics_message(stats, session, language):
+    """Statistika xabarini yaratish"""
+    t = TRANSLATIONS[language]
+
+    # Agar hech qanday savolga javob berilmagan bo'lsa
+    if stats['total_answered'] == 0:
+        return f"📊 <b>{t['no_questions_answered']}</b>\n\n🏠 {t['main_menu']}"
+
+    # Aniqlikni hisoblash
+    accuracy = (stats['correct'] / stats['total_answered']) * 100 if stats['total_answered'] > 0 else 0
+
+    # Motivatsion xabar
+    if accuracy >= 80:
+        motivation = f"🏆 {t['excellent_result']}"
+    elif accuracy >= 60:
+        motivation = f"👍 {t['good_result']}"
+    else:
+        motivation = f"💪 {t['keep_trying']}"
+
+    # Asosiy statistika xabari
+    message = f"""🎯 <b>{t['session_ended']}</b>
+
+📊 <b>{t['quiz_statistics']}</b>
+━━━━━━━━━━━━━━━━━━━━━
+
+📝 <b>{t['category']}</b> {session.category_name}
+
+📈 <b>Natijalar:</b>
+  • 📊 {t['total_questions']}: <b>{stats['total_answered']}</b>
+  • ✅ {t['correct_answers']}: <b>{stats['correct']} ta</b>
+  • ❌ {t['wrong_answers']}: <b>{stats['wrong']} ta</b>
+  • ⏭️ {t['skipped_questions']}: <b>{stats['skipped']} ta</b>
+
+🎯 <b>{t['accuracy']}:</b> <code>{accuracy:.1f}%</code>
+
+⏰ <b>Vaqt ma'lumotlari:</b>
+  • 🚀 {t['start_time']}: <b>{stats['start_time']}</b>
+  • 🏁 {t['end_time']}: <b>{stats['end_time']}</b>
+  • ⏱️ {t['quiz_duration']}: <b>{stats['duration']}</b>
+
+{motivation}"""
+
+    return message
 # Savol darajalari uchun belgilar
 DIFFICULTY_LEVELS = {
     'easy': '🟢 Oson',
@@ -444,17 +601,83 @@ def create_question_keyboard(answers, language='uz', show_next=True):
             row = []
 
     # Boshqaruv tugmalari
+    t = TRANSLATIONS[language]
     control_buttons = []
-    if show_next:
-        next_text = TRANSLATIONS[language].get('next_question', '➡️ Next question')
-        control_buttons.append(InlineKeyboardButton(next_text, callback_data="next_question"))
 
-    stop_text = TRANSLATIONS[language].get('stop_questions', '❌ Stop questions')
-    control_buttons.append(InlineKeyboardButton(stop_text, callback_data="stop_questions"))
+    # O'tkazib yuborish tugmasi qo'shish
+    control_buttons.append(InlineKeyboardButton(
+        f"⏭️ O'tkazib yuborish",
+        callback_data="skip_question"
+    ))
+
+    control_buttons.append(InlineKeyboardButton(
+        t['stop_questions'],
+        callback_data="stop_questions"
+    ))
 
     keyboard.append(control_buttons)
 
     return InlineKeyboardMarkup(keyboard)
+
+
+def create_question_keyboard_with_skip(answers, language='uz'):
+    """Savollar uchun keyboard (o'tkazib yuborish tugmasi bilan)"""
+    keyboard = []
+
+    # Javob variantlari
+    row = []
+    for i, answer in enumerate(answers):
+        display_text = answer if len(answer) <= 35 else answer[:32] + "..."
+        callback_data = f"answer_{i}"
+        row.append(InlineKeyboardButton(display_text, callback_data=callback_data))
+
+        if len(row) == 2 or i == len(answers) - 1:
+            keyboard.append(row)
+            row = []
+
+    # Boshqaruv tugmalari
+    t = TRANSLATIONS[language]
+    control_buttons = [
+        InlineKeyboardButton(f"⏭️ {t.get('skip_question', 'O`tkazib yuborish')}", callback_data="skip_question"),
+        InlineKeyboardButton(t['stop_questions'], callback_data="stop_questions")
+    ]
+    keyboard.append(control_buttons)
+
+    return InlineKeyboardMarkup(keyboard)
+
+
+
+async def handle_skip_question(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    user_id = query.from_user.id
+
+    if user_id not in user_quiz_sessions:
+        language = user_settings.get(user_id, {}).get('language', 'en')
+        t = TRANSLATIONS[language]
+        await query.answer(t['no_active_session'], show_alert=True)
+        return
+
+    session = user_quiz_sessions[user_id]
+    language = session.language
+    t = TRANSLATIONS[language]
+
+    # O'tkazib yuborilgan savolni belgilash
+    session.mark_skipped()
+
+    await query.answer("⏭️ Savol o'tkazib yuborildi", show_alert=False)
+
+    # Keyingi savolni ko'rsatish
+    await show_next_question(query, session)
+
+# TRANSLATIONS ga o'tkazib yuborish tarjimasini qo'shish
+skip_translations = {
+    'uz': {'skip_question': "O'tkazib yuborish"},
+    'en': {'skip_question': "Skip question"},
+    'ru': {'skip_question': "Пропустить вопрос"}
+}
+
+for lang in TRANSLATIONS:
+    TRANSLATIONS[lang].update(skip_translations[lang])
 
 
 # Kategoriya tanlash uchun keyboard
@@ -730,6 +953,9 @@ async def handle_answer(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_answer = question_data['answers'][answer_index]
     is_correct = user_answer == question_data['correct_answer']
 
+    # Statistikani yangilash
+    session.mark_answer(is_correct)
+
     # Javob natijasini ko'rsatish
     if is_correct:
         result_text = f"✅ {t['correct']}"
@@ -794,13 +1020,21 @@ async def handle_stop_questions(update: Update, context: ContextTypes.DEFAULT_TY
         session = user_quiz_sessions[user_id]
         language = session.language
         t = TRANSLATIONS[language]
+
+        # Sessiyani tugatish
+        session.end_session()
+
+        # Statistikani olish
+        stats = session.get_statistics()
+
+        # Statistika xabarini tayyorlash
+        stats_message = create_statistics_message(stats, session, language)
+
         del user_quiz_sessions[user_id]
 
-        await query.answer(t['stopped'], show_alert=False)
+        await query.answer(t['session_ended'], show_alert=False)
         await query.edit_message_text(
-            f"{t['stopped']}\n\n"
-            f"📊 {session.question_number - 1} {t['answered_questions']}\n"
-            f"{t['category']} {session.category_name}",
+            stats_message,
             parse_mode="HTML",
             reply_markup=create_restart_keyboard(language)
         )
@@ -812,6 +1046,50 @@ async def handle_stop_questions(update: Update, context: ContextTypes.DEFAULT_TY
         else:
             await query.answer("No active session found", show_alert=True)
 
+
+def create_statistics_message(stats, session, language):
+    """Statistika xabarini yaratish"""
+    t = TRANSLATIONS[language]
+
+    # Agar hech qanday savolga javob berilmagan bo'lsa
+    if stats['total_answered'] == 0:
+        return f"📊 <b>{t['no_questions_answered']}</b>\n\n🏠 {t['main_menu']}"
+
+    # Aniqlikni hisoblash
+    accuracy = (stats['correct'] / stats['total_answered']) * 100 if stats['total_answered'] > 0 else 0
+
+    # Motivatsion xabar
+    if accuracy >= 80:
+        motivation = f"🏆 {t['excellent_result']}"
+    elif accuracy >= 60:
+        motivation = f"👍 {t['good_result']}"
+    else:
+        motivation = f"💪 {t['keep_trying']}"
+
+    # Asosiy statistika xabari
+    message = f"""🎯 <b>{t['session_ended']}</b>
+
+📊 <b>{t['quiz_statistics']}</b>
+━━━━━━━━━━━━━━━━━━━━━
+
+📝 <b>{t['category']}:</b> {session.category_name}
+
+📈 <b>Natijalar:</b>
+  • 📊 {t['total_questions']}: <b>{stats['total_answered']}</b>
+  • ✅ {t['correct_answers']}: <b>{stats['correct']} ta</b>
+  • ❌ {t['wrong_answers']}: <b>{stats['wrong']} ta</b>
+  • ⏭️ {t['skipped_questions']}: <b>{stats['skipped']} ta</b>
+
+🎯 <b>{t['accuracy']}:</b> <code>{accuracy:.1f}%</code>
+
+⏰ <b>Vaqt ma'lumotlari:</b>
+  • 🏁 {t['start_time']}: <b>{stats['start_time']}</b>
+  • 🏁 {t['end_time']}: <b>{stats['end_time']}</b>
+  • ⏱️ {t['quiz_duration']}: <b>{stats['duration']}</b>
+
+{motivation}"""
+
+    return message
 
 async def handle_restart(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -1108,6 +1386,8 @@ def main():
     app.add_handler(CallbackQueryHandler(handle_restart, pattern=r"^restart_session$"))
     app.add_handler(CallbackQueryHandler(handle_main_menu, pattern=r"^main_menu$"))
     app.add_handler(CallbackQueryHandler(handle_noop, pattern=r"^noop$"))
+    app.add_handler(CallbackQueryHandler(handle_skip_question, pattern=r"^skip_question$"))
+
 
     # Yangi inline handler'lar
     app.add_handler(CallbackQueryHandler(handle_help_inline, pattern=r"^help_inline$"))
